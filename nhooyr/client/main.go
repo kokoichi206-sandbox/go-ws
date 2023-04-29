@@ -19,6 +19,23 @@ func checkGoroutineNum() {
 	}
 }
 
+// Ping must be called concurrently with Reader
+func Ping(c *websocket.Conn, ctx context.Context) {
+	pingInterval := time.Second * 30
+
+	for {
+		pingErr := c.Ping(ctx)
+
+		if pingErr == nil {
+			time.Sleep(pingInterval)
+		} else {
+			fmt.Printf("pingErr: %v\n", pingErr)
+
+			return
+		}
+	}
+}
+
 func wsAccessD(ctx context.Context, w io.Writer) {
 	c, _, err := websocket.Dial(ctx, "ws://localhost:11111/subscribe", nil)
 	if err != nil {
@@ -29,6 +46,9 @@ func wsAccessD(ctx context.Context, w io.Writer) {
 	defer c.Close(websocket.StatusInternalError, "the sky is falling")
 
 	defer fmt.Println("wsAccessD defer")
+
+	// Q. How to ping properly?
+	go Ping(c, ctx)
 
 	for {
 		// No need to check context.Canceled here!!!
@@ -44,9 +64,10 @@ func wsAccessD(ctx context.Context, w io.Writer) {
 
 		fmt.Printf("\"read\": %v\n", "read")
 
-		// but, timeout will destroy the connection itself.
+		// but, timeout (or deadline) will destroy the connection itself.
 		// so, it's not good...
-		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		// ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		// ctx, cancel := context.WithDeadline(ctx, time.Now().Add(5*time.Second))
 
 		mType, body, err := c.Read(ctx)
 		fmt.Printf("err: %v\n", err)
@@ -61,8 +82,6 @@ func wsAccessD(ctx context.Context, w io.Writer) {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			fmt.Println("netErr.Timeout()")
 
-			cancel()
-
 			continue
 		}
 
@@ -71,6 +90,14 @@ func wsAccessD(ctx context.Context, w io.Writer) {
 			fmt.Println("context.Canceled in c.Read!")
 
 			return
+		}
+
+		if errors.Is(err, context.DeadlineExceeded) {
+			fmt.Println("context.DeadlineExceeded in c.Read!")
+
+			// go to next read loop, but the connection is closed already,
+			// so, it will be failed in the next loop.
+			continue
 		}
 
 		switch mType {

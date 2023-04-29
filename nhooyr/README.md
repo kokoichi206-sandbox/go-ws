@@ -14,3 +14,7 @@
 > This is different from most net.Conn implementations where 
 > only the reading/writing goroutines are interrupted 
 > but the connection is kept alive.
+
+## ping
+
+- https://github.com/nhooyr/websocket/issues/226
