@@ -93,7 +93,8 @@ func (h *handler) pubsub(ws *websocket.Conn) {
 
 		switch r.PayloadType() {
 		case websocket.PingFrame:
-			// not read payload
+			b, _ := io.ReadAll(r)
+			slog.Debug(fmt.Sprintf("PingFrame: %s", string(b)))
 			pongMessage.Send(ws, nil)
 			continue
 
