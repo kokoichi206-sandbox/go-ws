@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,7 +15,8 @@ import (
 )
 
 const (
-	hostPort = ":12345"
+	hostPort        = ":12345"
+	defaultLogLevel = slog.LevelInfo
 )
 
 var pongMessage = websocket.Codec{
@@ -22,7 +24,7 @@ var pongMessage = websocket.Codec{
 	Unmarshal: unmarshal,
 }
 
-func marshal(v any) (msg []byte, payloadType byte, err error) {
+func marshal(_ any) (msg []byte, payloadType byte, err error) {
 	return []byte("thanks to ping!"), websocket.PongFrame, nil
 }
 
@@ -78,9 +80,11 @@ func (h *handler) pubsub(ws *websocket.Conn) {
 		r, err := ws.NewFrameReader()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				fmt.Printf("connection closed\n")
+				slog.Info("connection closed")
 				break
 			}
+
+			continue
 		}
 
 		switch r.PayloadType() {
@@ -91,12 +95,14 @@ func (h *handler) pubsub(ws *websocket.Conn) {
 
 		case websocket.TextFrame:
 			if err := h.handleTextFrame(r, topic, ws); err != nil {
-				fmt.Printf("failed to handle text frame: %v\n", err)
+				slog.Error(fmt.Sprintf("failed to handle text frame: %s", err))
 				continue
 			}
 
 		default:
 		}
+
+		io.Copy(io.Discard, r)
 	}
 }
 
@@ -120,7 +126,8 @@ func (h *handler) handleTextFrame(r textFR, topic string, ws *websocket.Conn) er
 func (h *handler) publishText(topic string, payload []byte, publisher *websocket.Conn) error {
 	conns := h.getConns(topic)
 
-	fmt.Printf("len(conns): %v\n", len(conns))
+	slog.Debug(fmt.Sprintf("len(conns): %v", len(conns)))
+	slog.Debug(fmt.Sprintf("string(payload): %v\n", string(payload)))
 
 	for _, conn := range conns {
 		if conn != publisher {
@@ -135,6 +142,12 @@ func (h *handler) publishText(topic string, payload []byte, publisher *websocket
 
 func main() {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
+	logLevel := flag.String("logLevel", defaultLogLevel.String(), "The log level")
+	flag.Parse()
+
+	ll := defaultLogLevel
+	ll.UnmarshalText([]byte(*logLevel))
+	slog.SetLogLoggerLevel(ll)
 
 	h := &handler{
 		topics: make(map[string][]*websocket.Conn),
