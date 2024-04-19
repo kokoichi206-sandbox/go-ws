@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -61,33 +63,52 @@ func (c *client) run() error {
 		log.Fatal(err)
 	}
 
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+
 	// Send ping messages to the server.
-	go func() {
+	go func(ctx context.Context) {
 		defer func() {
 			if r := recover(); r != nil {
-				slog.Error("panic recovered", r)
+				slog.Error("[ping] panic recovered", r)
 			}
 		}()
 
-		for range time.Tick(pingInterval) {
-			if err := pingMessage.Send(ws, nil); err != nil {
-				slog.Error("pingMessage.Send", err)
+		ticker := time.NewTicker(pingInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
 				return
+			case <-ticker.C:
+				if err := pingMessage.Send(ws, nil); err != nil {
+					slog.Error("pingMessage.Send", err)
+					return
+				}
 			}
 		}
-	}()
+	}(ctx)
 
-	go func() {
+	go func(ctx context.Context, cancel context.CancelCauseFunc) {
 		defer func() {
 			if r := recover(); r != nil {
-				slog.Error("panic recovered", r)
+				slog.Error("[read] panic recovered", r)
 			}
 		}()
 
 		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
 			fr, err := ws.NewFrameReader()
 			if err != nil {
 				slog.Error("ws.NewFrameReader", err)
+
+				return
 			}
 
 			switch fr.PayloadType() {
@@ -100,15 +121,27 @@ func (c *client) run() error {
 				b, _ := io.ReadAll(fr)
 				fmt.Fprintf(c.output, "%s\n", string(b))
 				continue
+
+			case websocket.CloseFrame:
+				slog.Info("CloseFrame received")
+				cancel(errors.New("CloseFrame received"))
+				return
 			}
 
 			io.Copy(io.Discard, fr)
 		}
-	}()
+	}(ctx, cancel)
 
 	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		if _, err := ws.Write([]byte(fmt.Sprintf("hello im %s", c.name))); err != nil {
-			log.Fatal(err)
+			slog.Error("ws.Write", err)
+			return fmt.Errorf("failed to ws.Write: %w", err)
 		}
 
 		// Send messages with random interval.

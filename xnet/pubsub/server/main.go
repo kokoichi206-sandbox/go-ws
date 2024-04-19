@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -8,8 +9,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"os/signal"
 	"slices"
 	"sync"
+	"syscall"
 
 	"golang.org/x/net/websocket"
 )
@@ -140,6 +144,16 @@ func (h *handler) publishText(topic string, payload []byte, publisher *websocket
 	return nil
 }
 
+func (h *handler) close() {
+	for topic, conns := range h.topics {
+		for _, conn := range conns {
+			conn.Close()
+		}
+
+		delete(h.topics, topic)
+	}
+}
+
 func main() {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 	logLevel := flag.String("logLevel", defaultLogLevel.String(), "The log level")
@@ -149,12 +163,34 @@ func main() {
 	ll.UnmarshalText([]byte(*logLevel))
 	slog.SetLogLoggerLevel(ll)
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt, os.Kill)
+	defer stop()
+
 	h := &handler{
 		topics: make(map[string][]*websocket.Conn),
 		mu:     sync.RWMutex{},
 	}
-	http.Handle("GET /{topic}", websocket.Handler(h.pubsub))
-	if err := http.ListenAndServe(hostPort, nil); err != nil {
-		panic("ListenAndServe: " + err.Error())
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /{topic}", websocket.Handler(h.pubsub))
+
+	srv := &http.Server{
+		Addr:    hostPort,
+		Handler: mux,
 	}
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil {
+			if errors.Is(err, http.ErrServerClosed) {
+				slog.Info("server closed gracefully")
+				return
+			}
+			slog.Error(fmt.Sprintf("failed to listen and serve: %s", err))
+		}
+	}()
+
+	<-ctx.Done()
+	slog.Info("shutting down...")
+	h.close()
+	srv.Shutdown(ctx)
 }
