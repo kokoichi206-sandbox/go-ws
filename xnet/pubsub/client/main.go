@@ -28,9 +28,9 @@ func unmarshal(msg []byte, payloadType byte, v any) (err error) {
 	return json.Unmarshal(msg, v)
 }
 
-func main() {
+func newClient(topic string) {
 	origin := fmt.Sprintf("http://%s", hostPort)
-	url := fmt.Sprintf("ws://%s/subscribe", hostPort)
+	url := fmt.Sprintf("ws://%s/%s", hostPort, topic)
 
 	ws, err := websocket.Dial(url, "", origin)
 	if err != nil {
@@ -38,8 +38,6 @@ func main() {
 	}
 
 	go func() {
-		fmt.Println("---------- write ping  ----------")
-
 		defer func() {
 			if r := recover(); r != nil {
 				fmt.Println("panic recovered: ", r)
@@ -48,14 +46,13 @@ func main() {
 
 		for range time.Tick(pingInterval) {
 			if err := pingMessage.Send(ws, nil); err != nil {
-				log.Fatal(err)
+				fmt.Printf("err: %v\n", err)
+				return
 			}
 		}
 	}()
 
 	go func() {
-		fmt.Println("---------- read loop ----------")
-
 		for {
 			fr, err := ws.NewFrameReader()
 			if err != nil {
@@ -72,16 +69,27 @@ func main() {
 				b, _ := io.ReadAll(fr)
 				fmt.Printf("string(b): %v\n", string(b))
 				continue
-				// fmt.Printf("Received: %s.\n", string(msg))
 			}
 		}
 	}()
 
 	for {
-		if _, err := ws.Write([]byte("test subscribe")); err != nil {
+		if _, err := ws.Write([]byte("new kawaii")); err != nil {
 			log.Fatal(err)
 		}
 
 		time.Sleep(5 * time.Second)
 	}
+}
+
+func main() {
+	go newClient("topic")
+	time.Sleep(1 * time.Second)
+	go newClient("topic")
+
+	go newClient("topic2")
+	time.Sleep(1 * time.Second)
+	go newClient("topic2")
+
+	time.Sleep(100 * time.Second)
 }
