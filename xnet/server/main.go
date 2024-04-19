@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,7 +11,7 @@ import (
 )
 
 const (
-	hostPort = ":12345"
+	hostPort = ":12341"
 )
 
 var pongMessage = websocket.Codec{
@@ -19,11 +20,11 @@ var pongMessage = websocket.Codec{
 }
 
 func marshal(v any) (msg []byte, payloadType byte, err error) {
-	return []byte("thanks to ping!"), websocket.PingFrame, nil
+	return []byte("thanks to ping!"), websocket.PongFrame, nil
 }
 
 func unmarshal(msg []byte, payloadType byte, v any) (err error) {
-	return nil
+	return json.Unmarshal(msg, v)
 }
 
 type textFR interface {
@@ -47,16 +48,18 @@ func subscribe(ws *websocket.Conn) {
 
 		switch r.PayloadType() {
 		case websocket.PingFrame:
+			b, _ := io.ReadAll(r)
+			fmt.Printf("string(b): %v\n", string(b))
 			pongMessage.Send(ws, nil)
 			continue
 
 		case websocket.TextFrame:
-			handleTextFrame(r)
+			handleTextFrame(r, ws)
 		}
 	}
 }
 
-func handleTextFrame(r textFR) error {
+func handleTextFrame(r textFR, ws *websocket.Conn) error {
 	if r.Len() > 1998_0206 {
 		return fmt.Errorf("too large payload: %d", r.Len())
 	}
@@ -67,6 +70,7 @@ func handleTextFrame(r textFR) error {
 	}
 
 	fmt.Printf("received: %s\n", res)
+	ws.Write(res)
 
 	return nil
 }

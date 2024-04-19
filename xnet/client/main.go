@@ -2,17 +2,17 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
+	"io"
 	"log"
-	"os"
 	"time"
 
 	"golang.org/x/net/websocket"
 )
 
 const (
-	hostPort = "localhost:12345"
+	hostPort     = "localhost:12341"
+	pingInterval = 3 * time.Second
 )
 
 var pingMessage = websocket.Codec{
@@ -37,19 +37,42 @@ func main() {
 		log.Fatal(err)
 	}
 
-	err = pingMessage.Send(ws, nil)
-	fmt.Printf("err: %v\n", err)
-
 	go func() {
+		fmt.Println("---------- write ping  ----------")
+
 		defer func() {
 			if r := recover(); r != nil {
 				fmt.Println("panic recovered: ", r)
 			}
 		}()
 
-		for range time.Tick(3 * time.Second) {
+		for range time.Tick(pingInterval) {
 			if err := pingMessage.Send(ws, nil); err != nil {
 				log.Fatal(err)
+			}
+		}
+	}()
+
+	go func() {
+		fmt.Println("---------- read loop ----------")
+
+		for {
+			fr, err := ws.NewFrameReader()
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			switch fr.PayloadType() {
+			case websocket.PongFrame:
+				b, _ := io.ReadAll(fr)
+				fmt.Printf("PongFrame string(b): %v\n", string(b))
+				continue
+
+			case websocket.TextFrame:
+				b, _ := io.ReadAll(fr)
+				fmt.Printf("string(b): %v\n", string(b))
+				continue
+				// fmt.Printf("Received: %s.\n", string(msg))
 			}
 		}
 	}()
@@ -58,21 +81,6 @@ func main() {
 		if _, err := ws.Write([]byte("test subscribe")); err != nil {
 			log.Fatal(err)
 		}
-
-		fmt.Println("---------- read ----------")
-		ws.SetReadDeadline(time.Now().Add(10 * time.Second))
-		var msg = make([]byte, 512)
-		var n int
-		if n, err = ws.Read(msg); err != nil {
-			if errors.Is(err, os.ErrDeadlineExceeded) {
-				fmt.Println("read timeout")
-
-				continue
-			}
-
-			log.Fatal(err)
-		}
-		fmt.Printf("Received: %s.\n", msg[:n])
 
 		time.Sleep(5 * time.Second)
 	}
