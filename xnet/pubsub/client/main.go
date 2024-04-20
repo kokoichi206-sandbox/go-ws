@@ -22,6 +22,8 @@ const (
 	defaultLogLevel = slog.LevelInfo
 )
 
+// PingFrame 送信のための Codec。
+// see: https://github.com/golang/net/blob/v0.24.0/websocket/websocket.go#L372-L419
 var pingMessage = websocket.Codec{
 	Marshal:   marshal,
 	Unmarshal: unmarshal,
@@ -40,7 +42,7 @@ type client struct {
 	topic    string
 	name     string
 
-	// received messages are written to this writer
+	// output はメッセージを表示するための io.Writer。
 	output io.Writer
 }
 
@@ -66,7 +68,7 @@ func (c *client) run() error {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	defer cancel(nil)
 
-	// Send ping messages to the server.
+	// Ping するための goroutine。
 	go func(ctx context.Context) {
 		defer func() {
 			if r := recover(); r != nil {
@@ -90,6 +92,7 @@ func (c *client) run() error {
 		}
 	}(ctx)
 
+	// Read するための goroutine。
 	go func(ctx context.Context, cancel context.CancelCauseFunc) {
 		defer func() {
 			if r := recover(); r != nil {
@@ -126,8 +129,11 @@ func (c *client) run() error {
 				slog.Info("CloseFrame received")
 				cancel(errors.New("CloseFrame received"))
 				return
+
+			default:
 			}
 
+			// 不要な fr を読み捨てる。
 			io.Copy(io.Discard, fr)
 		}
 	}(ctx, cancel)
@@ -144,23 +150,26 @@ func (c *client) run() error {
 			return fmt.Errorf("failed to ws.Write: %w", err)
 		}
 
-		// Send messages with random interval.
+		// メッセージ送信のエミュレーション。
+		// ランダムな時間待機してから再度メッセージを送信する。
 		time.Sleep(time.Duration((rand.IntN(5) + 1)) * time.Second)
 	}
 }
 
 func main() {
+	// flag の設定。
 	hostPort := flag.String("hostPort", defaultHostPort, "Host and port of the server")
 	topic := flag.String("topic", "topic", "The topic to subscribe to")
 	logLevel := flag.String("logLevel", defaultLogLevel.String(), "The log level")
 	name := flag.String("name", "john doe", "The name of the client")
-
 	flag.Parse()
 
+	// logger の設定。
 	ll := defaultLogLevel
 	ll.UnmarshalText([]byte(*logLevel))
 	slog.SetLogLoggerLevel(ll)
 
+	// client の作成と実行。
 	cl := newClient(*hostPort, *topic, *name)
 	cl.run()
 }
